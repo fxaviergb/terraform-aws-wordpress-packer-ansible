@@ -1,0 +1,144 @@
+---
+- hosts: localhost
+  become: true
+
+  tasks:
+    - name: Actualizar paquetes del sistema
+      apt:
+        update_cache: yes
+
+    - name: Instalar Apache, MySQL, PHP y dependencias
+      apt:
+        name:
+          - apache2
+          - mysql-server
+          - php
+          - php-mysql
+          - libapache2-mod-php
+          - php-cli
+          - php-curl
+          - php-gd
+          - php-mbstring
+          - php-xml
+          - php-xmlrpc
+          - php-soap
+          - unzip
+          - curl
+          - python3-pymysql
+        state: present
+
+    - name: Modificar configuración del sitio de WordPress
+      template:
+        src: "{{ template_path }}/wordpress.conf.j2"
+        dest: /etc/apache2/sites-available/wordpress.conf
+      notify: Reiniciar Apache
+
+    - name: Iniciar y habilitar Apache y MySQL
+      systemd:
+        name: "{{ item }}"
+        state: started
+        enabled: yes
+      loop:
+        - apache2
+        - mysql
+
+    - name: Configurar MySQL para permitir autenticación con contraseña
+      command: >
+        sudo mysql --socket=/var/run/mysqld/mysqld.sock -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY 'root_password'; FLUSH PRIVILEGES;"
+
+    - name: Crear base de datos de WordPress
+      mysql_db:
+        name: wordpress
+        state: present
+        login_user: root
+        login_password: root_password
+
+    - name: Crear usuario MySQL para WordPress
+      mysql_user:
+        name: wp_user
+        password: wp_password
+        priv: "wordpress.*:ALL"
+        host: localhost
+        state: present
+        login_user: root
+        login_password: root_password
+
+    - name: Descargar WordPress
+      get_url:
+        url: https://wordpress.org/latest.tar.gz
+        dest: /tmp/wordpress.tar.gz
+
+    - name: Crear directorio para WordPress
+      file:
+        path: /var/www/wordpress
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: "0755"
+
+    - name: Extraer WordPress en la carpeta /var/www/wordpress
+      unarchive:
+        src: /tmp/wordpress.tar.gz
+        dest: /var/www/wordpress
+        remote_src: yes
+        extra_opts:
+          - --strip-components=1
+
+    - name: Configurar archivo `wp-config.php`
+      template:
+        src: "{{ template_path }}/wp-config.php.j2"
+        dest: /var/www/wordpress/wp-config.php
+        owner: www-data
+        group: www-data
+        mode: "0644"
+
+    - name: Cambiar permisos de WordPress
+      file:
+        path: /var/www/wordpress
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: "0755"
+        recurse: yes
+
+    - name: Deshabilitar el sitio por defecto de Apache
+      command: a2dissite 000-default.conf
+      ignore_errors: true
+
+    - name: Habilitar el sitio de WordPress en Apache
+      command: a2ensite wordpress.conf
+
+    - name: Habilitar el módulo rewrite en Apache
+      command: a2enmod rewrite
+
+    - name: Reiniciar Apache después de configurar el sitio de WordPress
+      systemd:
+        name: apache2
+        state: restarted
+
+    - name: Instalar WP-CLI
+      get_url:
+        url: https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar
+        dest: /usr/local/bin/wp
+        mode: "0755"
+
+    - name: Instalar WordPress si no está instalado
+      shell: sudo -u www-data wp core install --url="http://localhost" --title="Blog Personal" --admin_user=admin --admin_password=admin --admin_email=admin@example.com --path=/var/www/wordpress
+
+    - name: Instalar y activar el tema Astra
+      shell: sudo -u www-data wp theme install astra --activate --path=/var/www/wordpress
+
+    - name: Crear usuario "Ansible" con rol editor
+      shell: sudo -u www-data wp user create ansible ansible@example.com --role=editor --user_pass=ansible_password --path=/var/www/wordpress
+
+    - name: Crear categoría "DEVOPS"
+      shell: sudo -u www-data wp term create category DEVOPS --path=/var/www/wordpress
+
+    - name: Crear post con contenido personalizado
+      shell: sudo -u www-data wp post create --post_title="Primer Post Ansible" --post_content="$(cat /tmp/templates/post-content.html)" --post_status=publish --post_author=$(sudo -u www-data wp user get ansible --field=ID --path=/var/www/wordpress) --post_category=$(sudo -u www-data wp term list category --field=term_id --name=DEVOPS --path=/var/www/wordpress) --path=/var/www/wordpress
+
+  handlers:
+    - name: Reiniciar Apache
+      systemd:
+        name: apache2
+        state: restarted

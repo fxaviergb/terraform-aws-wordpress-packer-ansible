@@ -1,0 +1,32 @@
+{
+  "variables": {
+    "aws_region": "us-east-1",
+    "ami_name": "wordpress-ami"
+  },
+  "builders": [
+    {
+      "type": "amazon-ebs",
+      "region": "{{user `aws_region`}}",
+      "source_ami": "ami-04b4f1a9cf54c11d0",
+      "instance_type": "t2.micro",
+      "ssh_username": "ubuntu",
+      "ami_name": "{{user `ami_name`}}-{{timestamp}}"
+    }
+  ],
+  "provisioners": [
+    {
+      "type": "shell",
+      "inline": ["sudo apt update", "sudo apt install -y ansible"]
+    },
+    {
+      "type": "file",
+      "source": "provisioning/templates",
+      "destination": "/tmp/templates"
+    },
+    {
+      "type": "ansible-local",
+      "playbook_file": "provisioning/playbook.yml",
+      "extra_arguments": ["--extra-vars", "template_path=/tmp/templates"]
+    }
+  ]
+}
